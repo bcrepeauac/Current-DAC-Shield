@@ -14,23 +14,26 @@ void setup() {
   while (!Serial);
 
   parser.registerCommand("TEST", "sdiu", &cmd_test);
-  Serial.println("registered command: TEST <string> <double> <int64> <uint64>");
-  Serial.println("example: TEST \"\\x41bc\\ndef\" -1.234e5 -123 123");
+  Serial.println(F("registered command: TEST <string> <double> <int64> <uint64>"));
+  Serial.println(F("example: TEST \"\\x41bc\\ndef\" -1.234e5 -123 123"));
   parser.registerCommand("RESET", "", &cmdReset);
-  Serial.println("registered command: RESET");
-  Serial.println("example: RESET");
+  Serial.println(F("registered command: RESET"));
+  Serial.println(F("example: RESET"));
   parser.registerCommand("STATUS", "", &cmdStatus);
-  Serial.println("registered command: STATUS");
-  Serial.println("example: STATUS");
+  Serial.println(F("registered command: STATUS"));
+  Serial.println(F("example: STATUS"));
   parser.registerCommand("*IDN?", "", &cmdIdentify);
-  Serial.println("registered command: *IDN?");
-  Serial.println("example: *IDN?");
+  Serial.println(F("registered command: *IDN?"));
+  Serial.println(F("example: *IDN?"));
   parser.registerCommand("SET", "ids", &cmdSetChannelCurrent);
-  Serial.println("registered command: SET <int> <double> <string>");
-  Serial.println("example SET 1 1.24 uA");
+  Serial.println(F("registered command: SET <int> <double> <string>"));
+  Serial.println(F("example SET 1 1.24 uA"));
+  parser.registerCommand("GET", "i", &cmdGetChannelCurrent);
+  Serial.println(F("registered command: GET <int>"));
+  Serial.println(F("example GET 1"));
   parser.registerCommand("SCALE", "s", &cmdScale);
-  Serial.println("registered command: SCALE <string>");
-  Serial.println("example SCALE +5");
+  Serial.println(F("registered command: SCALE <string>"));
+  Serial.println(F("example SCALE +5"));
 }
 
 void loop() {
