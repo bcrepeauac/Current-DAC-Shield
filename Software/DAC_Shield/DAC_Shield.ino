@@ -1,18 +1,29 @@
+#include <CommandParser.h>  //Include the command parser library. https://github.com/Uberi/Arduino-CommandParser/tree/master
+#include <SPI.h> //Include the library for SPI
+
 #include "DAC_Shield.h"
 
-#include <CommandParser.h>  //Include the command parser library. https://github.com/Uberi/Arduino-CommandParser/tree/master
+
 
 typedef CommandParser<> MyCommandParser;
 
 MyCommandParser parser;
 
-
-
+#define AD5754_MAX_SPI 30000000 //30MHz
+#define CS_PIN 10
 
 void setup() {
+  //Serial Setup
   Serial.begin(9600);
   while (!Serial);
+  //SPI Setup
+  pinMode(CS_PIN, OUTPUT);
+  digitalWrite(CS_PIN, HIGH);//De-assert CS pin
+  SPI.begin();
+  SPI.beginTransaction(SPISettings(AD5754_MAX_SPI, MSBFIRST, SPI_MODE0));
+  SPI.setDataMode(SPI_MODE1);
 
+  SPI_Write(0xAA, 0x5555);
   parser.registerCommand("TEST", "sdiu", &cmd_test);
   Serial.println(F("registered command: TEST <string> <double> <int64> <uint64>"));
   Serial.println(F("example: TEST \"\\x41bc\\ndef\" -1.234e5 -123 123"));

@@ -7,6 +7,11 @@
 #define VREF 2.5
 #define RESOLUTION 16
 
+//Set the Chip Select pin if not already defined.
+#ifndef CS_PIN
+#define CS_PIN 10
+#endif
+
 #define CH1_RESISTOR 50000  //RN3 on Circuit Board
 #define CH2_RESISTOR 27000  //RN4 on Circuit Board
 #define CH3_RESISTOR 20000  //RN1 on Circuit Board
@@ -31,6 +36,16 @@ double Channel2Setpoint = 0.0;
 double Channel3Setpoint = 0.0;
 double Channel4Setpoint = 0.0;
 // Helper functions
+
+void SPI_Write(uint8_t command, uint16_t  data){
+  uint8_t upper_byte = (uint8_t)(data >> 8);
+  uint8_t lower_byte = (uint8_t)(data & 0xFF); 
+  digitalWrite(CS_PIN, LOW);
+  SPI.transfer(command);
+  SPI.transfer(upper_byte);
+  SPI.transfer(lower_byte);
+  digitalWrite(CS_PIN, HIGH);
+}
 
 uint16_t float2bin(double inputValue, uint16_t resistance, bool bipolar, uint8_t gain){
   // convert float to the 2's compliment 
@@ -58,6 +73,24 @@ double bin2float(uint16_t binary, uint16_t resistance, bool bipolar, uint8_t gai
 // Command Functions
 void cmdReset(MyCommandParser::Argument *args, char *response){
   // Reset all outputs to Zero
+
+  //Reset all internal variables for tracking settings
+  Channel1Setting = 0;
+  Channel2Setting = 0;
+  Channel3Setting = 0;
+  Channel4Setting = 0;
+  Channel1Gain = 4;
+  Channel2Gain = 4;
+  Channel3Gain = 4;
+  Channel4Gain = 4;
+  Channel1Bipolar = 1;
+  Channel2Bipolar = 1;
+  Channel3Bipolar = 1;
+  Channel4Bipolar = 1;
+  Channel1Setpoint = 0.0;
+  Channel2Setpoint = 0.0;
+  Channel3Setpoint = 0.0;
+  Channel4Setpoint = 0.0;
   strlcpy(response, "OK", MyCommandParser::MAX_RESPONSE_SIZE);
 }
 void cmdSetChannelCurrent(MyCommandParser::Argument *args, char *response){
@@ -65,7 +98,7 @@ void cmdSetChannelCurrent(MyCommandParser::Argument *args, char *response){
   uint32_t resistor;
   uint8_t gain;
   bool bipolar;
-  double * setpoint_ptr = NULL;
+  double *setpoint_ptr = NULL;
 
   //Parse the input args:
   uint8_t channel = (uint8_t)args[0].asInt64;
@@ -103,21 +136,25 @@ void cmdSetChannelCurrent(MyCommandParser::Argument *args, char *response){
       resistor = CH1_RESISTOR;
       gain = Channel1Gain;
       bipolar = Channel1Bipolar;
+      setpoint_ptr = &Channel1Setpoint;
       break;
     case 2:
       resistor = CH2_RESISTOR;
       gain = Channel2Gain;
       bipolar = Channel2Bipolar;
+      setpoint_ptr = &Channel2Setpoint;
       break;
     case 3:
       resistor = CH3_RESISTOR;
       gain = Channel3Gain;
       bipolar = Channel3Bipolar;
+      setpoint_ptr = &Channel3Setpoint;
       break;
     case 4:
       resistor = CH4_RESISTOR;
       gain = Channel4Gain;
       bipolar = Channel4Bipolar;
+      setpoint_ptr = &Channel4Setpoint;
       break;
     default:
       strlcpy_PF(response, F("ERROR: Channel not found, options are 1, 2, 3, and 4"), MyCommandParser::MAX_RESPONSE_SIZE);
@@ -129,7 +166,7 @@ void cmdSetChannelCurrent(MyCommandParser::Argument *args, char *response){
   //Send Commands to DAC
   //Report actual current
   double current = bin2float(binary, resistor, bipolar, gain);
-  //*setpoint_ptr = current;
+  *setpoint_ptr = current;
   if (current > 1){
     Serial.print(current, 4);
     Serial.println("A");
