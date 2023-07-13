@@ -41,9 +41,9 @@ void setup() {
   parser.registerCommand("GET", "i", &cmdGetChannelCurrent);
   Serial.println(F("registered command: GET <int>"));
   Serial.println(F("example GET 1"));
-  parser.registerCommand("SCALE", "s", &cmdScale);
-  Serial.println(F("registered command: SCALE <string>"));
-  Serial.println(F("example SCALE +5"));
+  parser.registerCommand("SCALE", "is", &cmdScale);
+  Serial.println(F("registered command: SCALE <int> <string>"));
+  Serial.println(F("example SCALE 1 +5"));
 }
 
 void loop() {

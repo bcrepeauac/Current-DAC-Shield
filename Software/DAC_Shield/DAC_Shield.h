@@ -2,6 +2,7 @@
 #define _DACSHIELD_H    // (Use a suitable name, usually based on the file name.)
 
 #include <CommandParser.h>  //Include the command parser library. https://github.com/Uberi/Arduino-CommandParser/tree/master
+#include <math.h>  //Math library for NAN definition
 
 #define IDN_string "Amherst College, Current DAC, SN001, A00.01.00"
 #define VREF 2.5
@@ -66,6 +67,45 @@ double Channel2Setpoint = 0.0;
 double Channel3Setpoint = 0.0;
 double Channel4Setpoint = 0.0;
 // Helper functions
+void gain_polar2range(uint8_t gain, bool bipolar){
+  switch(gain){
+    case 2:
+      Serial.println("+5");
+      return;
+    case 4:
+      if (bipolar){
+        Serial.println("+/-5");
+        return;
+      }
+      Serial.println("+10");
+      return;
+    case 8:
+      Serial.println("+/-10");
+      return;
+    default:
+      Serial.println("Unknown Gain stored");
+  }
+}
+
+void float2val_units(double setpoint){
+  //Calculate correct units from magnitude of value and assign the variables
+  if (isnan(setpoint)){  //If the value is nan, print it nicely, without units
+    Serial.println("NaN");
+    return;
+  }
+  if (abs(setpoint) > 1){
+    Serial.print(setpoint, 4);
+    Serial.println("A");
+  }
+  else if (abs(setpoint) > 1e-3){
+    Serial.print(setpoint*1e3, 4);
+    Serial.println("mA");
+  }
+  else{
+    Serial.print(setpoint*1e6, 4);
+    Serial.println("uA");
+  }
+}
 
 void SPI_Write(uint8_t command, uint16_t  data){
   uint8_t upper_byte = (uint8_t)(data >> 8);
@@ -78,20 +118,22 @@ void SPI_Write(uint8_t command, uint16_t  data){
 }
 
 uint16_t float2bin(double inputValue, uint16_t resistance, bool bipolar, uint8_t gain){
-  // convert float to the 2's compliment 
+  // convert float to the 2's complement 
   double temp = resistance*inputValue;
   temp /= VREF*gain;
   if (bipolar){
     temp += 0.5;
   }
   
-  int32_t binary = round((pow(2, RESOLUTION)-1)*temp);
-  return (uint16_t)constrain(binary, 0, pow(2, RESOLUTION)-1);  //Return the constained values
+  int32_t binary = round((pow(2, RESOLUTION))*temp);
+  return 0x8000^(uint16_t)constrain(binary, 0, pow(2, RESOLUTION)-1);  //Return the constained values
+  // XOR to invert the MSB to get 2's complement
 }
 
 double bin2float(uint16_t binary, uint16_t resistance, bool bipolar, uint8_t gain){
   //Convert 2's compliment to analog value
-  double temp = binary/(pow(2,RESOLUTION)-1);
+  // XOR to invert MSB 
+  double temp = (0x8000^binary)/(pow(2,RESOLUTION));
   temp *= VREF*gain;
   
   if (bipolar){
@@ -134,6 +176,7 @@ void cmdReset(MyCommandParser::Argument *args, char *response){
   Channel2Setpoint = 0.0;
   Channel3Setpoint = 0.0;
   Channel4Setpoint = 0.0;
+  DAC_setup(true);
   strlcpy(response, "OK", MyCommandParser::MAX_RESPONSE_SIZE);
 }
 void cmdSetChannelCurrent(MyCommandParser::Argument *args, char *response){
@@ -151,7 +194,7 @@ void cmdSetChannelCurrent(MyCommandParser::Argument *args, char *response){
   Serial.print("Setting: ");
   Serial.println(setpoint);
   char * units = args[2].asString;
-  Serial.print("Units: ");
+  //Serial.print("Units: ");
   
   //Switch case to determine units
   if (strcmp(units, "uA") == 0){
@@ -249,23 +292,34 @@ void cmdGetChannelCurrent(MyCommandParser::Argument *args, char *response){
       strlcpy_PF(response, F("ERROR: Channel not found, options are 1, 2, 3, and 4"), MyCommandParser::MAX_RESPONSE_SIZE);
       return;
   }
-  if (setpoint > 1){
-    Serial.print(setpoint, 4);
-    Serial.println("A");
-  }
-  else if (setpoint > 1e-3){
-    Serial.print(setpoint*1e3, 4);
-    Serial.println("mA");
-  }
-  else{
-    Serial.print(setpoint*1e6, 4);
-    Serial.println("uA");
-  }
+  float2val_units(setpoint);
   strlcpy(response, "OK", MyCommandParser::MAX_RESPONSE_SIZE);
 }
 void cmdStatus(MyCommandParser::Argument *args, char *response){
+  double current;
+  char units[3];
   // Print out current settings
-  Serial.println(Channel1Setting);
+  Serial.println("Channel 1:");
+  Serial.print("\tCurrent:\t");
+  float2val_units(Channel1Setpoint);
+  Serial.print("\tRange:\t\t");
+  gain_polar2range(Channel1Gain,Channel1Bipolar);
+  Serial.println("Channel 2:");
+  Serial.print("\tCurrent:\t");
+  float2val_units(Channel2Setpoint);
+  Serial.print("\tRange:\t\t");
+  gain_polar2range(Channel2Gain,Channel2Bipolar);
+  Serial.println("Channel 3:");
+  Serial.print("\tCurrent:\t");
+  float2val_units(Channel3Setpoint);
+  Serial.print("\tRange:\t\t");
+  gain_polar2range(Channel3Gain,Channel3Bipolar);
+  Serial.println("Channel 4:");
+  Serial.print("\tCurrent:\t");
+  float2val_units(Channel4Setpoint);
+  Serial.print("\tRange:\t\t");
+  gain_polar2range(Channel4Gain,Channel4Bipolar);
+  
 
 }
 void cmdIdentify(MyCommandParser::Argument *args, char *response){
@@ -274,10 +328,69 @@ void cmdIdentify(MyCommandParser::Argument *args, char *response){
 }
 void cmdScale(MyCommandParser::Argument *args, char *response){
   //Figure out what scale to change to
-
+  uint8_t channel = (uint8_t)args[0].asInt64;
+  char * range = args[1].asString;
+  uint8_t * gain = NULL;  //pointer to selected gain variable
+  bool * bipolar = NULL;  //pointer to selected bipolar variable
+  uint8_t command = 0x00;
+  uint16_t data = 0x0000; //data dword 
+  switch(channel){
+    case 1:
+      gain = &Channel1Gain;
+      bipolar = &Channel1Bipolar;
+      command = 0x08;
+      Channel1Setpoint = NAN;  //Invalidate the setpoint in memory since the scale changed
+      break;
+    case 2:
+      gain = &Channel2Gain;
+      bipolar = &Channel2Bipolar;
+      command = 0x09;
+      Channel2Setpoint = NAN;  //Invalidate the setpoint in memory since the scale changed
+      break;
+    case 3:
+      gain = &Channel3Gain;
+      bipolar = &Channel3Bipolar;
+      command = 0x0A;
+      Channel3Setpoint = NAN;  //Invalidate the setpoint in memory since the scale changed
+      break;
+    case 4:
+      gain = &Channel4Gain;
+      bipolar = &Channel4Bipolar;
+      command = 0x0B;
+      Channel4Setpoint = NAN;  //Invalidate the setpoint in memory since the scale changed
+      break;
+    default:
+      strlcpy_PF(response, F("ERROR: Channel not found, options are 1, 2, 3, and 4"), MyCommandParser::MAX_RESPONSE_SIZE);
+      return;
+  }
   //Set the channel scale
-
+  if (strcmp(range, "+5")==0){
+    *gain = 2;
+    *bipolar = false;
+    data = 0x0000;
+  }
+  else if (strcmp(range, "+10")==0){
+    *gain = 4;
+    *bipolar = false;
+    data = 0x0001;
+  }
+  else if (strcmp(range, "+/-5")==0){
+    *gain = 4;
+    *bipolar = true;
+    data = 0x0003;
+  }
+  else if (strcmp(range, "+/-10")==0){
+    *gain = 8;
+    *bipolar = true;
+    data = 0x0004;
+  }
+  else{
+    strlcpy_PF(response, F("ERROR: Range not found, options are +5,+10,+/-5,+/-10"), MyCommandParser::MAX_RESPONSE_SIZE);
+    return;
+  }
   //Update the channel values
+  SPI_Write(command, data);
+  strlcpy(response, "OK", MyCommandParser::MAX_RESPONSE_SIZE);
 
 }
 void cmd_test(MyCommandParser::Argument *args, char *response) {
