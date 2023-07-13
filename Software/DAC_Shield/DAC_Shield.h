@@ -17,6 +17,36 @@
 #define CH3_RESISTOR 20000  //RN1 on Circuit Board
 #define CH4_RESISTOR 1000   //RN2 on Circuit Board
 
+//DAC Defines
+//DAC Output Commands
+#define DAC_A 0x00
+#define DAC_B 0x01
+#define DAC_C 0x02
+#define DAC_D 0x03
+#define DAC_ALL 0x04
+
+//DAC Output Range Commands
+#define OUTPUT_RANGE_A 0x08
+#define OUTPUT_RANGE_B 0x09
+#define OUTPUT_RANGE_C 0x0A
+#define OUTPUT_RANGE_D 0x0B
+#define OUTPUT_RANGE_ALL 0x0C
+
+//DAC Control Commands
+#define NOP 0x18
+#define CLEAR 0x1C
+#define LOAD 0x1D
+#define CONTROL_REG 0x19
+
+//DAC Power Control Commands
+#define POWER_REG 0x10
+#define POWER_ON_ALL 0x000F
+#define POWER_OFF_ALL 0x0000
+
+//Defaults
+#define RANGE_DEFAULT 0x0002 //Range set to +/-5V
+
+
 typedef CommandParser<> MyCommandParser;
 
 int16_t Channel1Setting = 0;
@@ -68,6 +98,19 @@ double bin2float(uint16_t binary, uint16_t resistance, bool bipolar, uint8_t gai
     temp -= gain*VREF/2;
   }
   return (temp/resistance);
+}
+
+//DAC Functions
+void DAC_setup(bool enable){
+  SPI_Write(CLEAR, 0x0000); //Reset the outputs to zero
+  SPI_Write(OUTPUT_RANGE_ALL, RANGE_DEFAULT); //Range to +/- 5V
+  if (enable){
+    SPI_Write(POWER_REG, POWER_ON_ALL);  // Power on all dacs
+  }
+}
+
+void DAC_output(uint8_t channel, uint16_t binary){
+  SPI_Write(channel,binary);
 }
 
 // Command Functions
@@ -137,24 +180,28 @@ void cmdSetChannelCurrent(MyCommandParser::Argument *args, char *response){
       gain = Channel1Gain;
       bipolar = Channel1Bipolar;
       setpoint_ptr = &Channel1Setpoint;
+      channel = DAC_A;  //re-use channel with the register mask
       break;
     case 2:
       resistor = CH2_RESISTOR;
       gain = Channel2Gain;
       bipolar = Channel2Bipolar;
       setpoint_ptr = &Channel2Setpoint;
+      channel = DAC_B;
       break;
     case 3:
       resistor = CH3_RESISTOR;
       gain = Channel3Gain;
       bipolar = Channel3Bipolar;
       setpoint_ptr = &Channel3Setpoint;
+      channel = DAC_C;
       break;
     case 4:
       resistor = CH4_RESISTOR;
       gain = Channel4Gain;
       bipolar = Channel4Bipolar;
       setpoint_ptr = &Channel4Setpoint;
+      channel = DAC_D;
       break;
     default:
       strlcpy_PF(response, F("ERROR: Channel not found, options are 1, 2, 3, and 4"), MyCommandParser::MAX_RESPONSE_SIZE);
@@ -164,6 +211,7 @@ void cmdSetChannelCurrent(MyCommandParser::Argument *args, char *response){
   uint16_t binary = float2bin(setpoint, resistor, bipolar, gain);
   Serial.println(binary, BIN);
   //Send Commands to DAC
+  DAC_output(channel, binary);
   //Report actual current
   double current = bin2float(binary, resistor, bipolar, gain);
   *setpoint_ptr = current;
@@ -232,11 +280,6 @@ void cmdScale(MyCommandParser::Argument *args, char *response){
   //Update the channel values
 
 }
-
-
-
-
-
 void cmd_test(MyCommandParser::Argument *args, char *response) {
   Serial.print("string: "); Serial.println(args[0].asString);
   Serial.print("double: "); Serial.println(args[1].asDouble);
