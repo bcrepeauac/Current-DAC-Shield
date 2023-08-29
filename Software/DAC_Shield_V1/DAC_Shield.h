@@ -4,15 +4,23 @@
 #include <CommandParser.h>  //Include the command parser library. https://github.com/Uberi/Arduino-CommandParser/tree/master
 #include <math.h>  //Math library for NAN definition
 
-#define IDN_string "Amherst College, Current DAC, SN001, A00.01.00"
+#define IDN_string "Amherst College,Current_DAC,SN001,A00.01.00"
 #define VREF 2.5
+#define AREF 4.5 //Analog reference on the arduino is reading low
 #define RESOLUTION 16
+
+#define P12VMON A1
+#define N12VMON A2
+#define P5VMON A0
+#define P12SCALE 3
+#define N12SCALE 3
+#define P5SCALE 1.25
 
 //Set the Chip Select pin if not already defined.
 #ifndef CS_PIN
 #define CS_PIN 10
 #endif
-
+ 
 #define CH1_RESISTOR 50000  //RN3 on Circuit Board
 #define CH2_RESISTOR 27000  //RN4 on Circuit Board
 #define CH3_RESISTOR 20000  //RN1 on Circuit Board
@@ -41,11 +49,11 @@
 
 //DAC Power Control Commands
 #define POWER_REG 0x10
-#define POWER_ON_ALL 0x000F
+#define POWER_ON_ALL 0x001F //0x000F
 #define POWER_OFF_ALL 0x0000
 
 //Defaults
-#define RANGE_DEFAULT 0x0002 //Range set to +/-5V
+#define RANGE_DEFAULT 0x0003 //Range set to +/-5V Page 25 of Datasheet
 
 
 typedef CommandParser<> MyCommandParser;
@@ -124,6 +132,9 @@ uint16_t float2bin(double inputValue, uint16_t resistance, bool bipolar, uint8_t
   if (bipolar){
     temp += 0.5;
   }
+  else{
+    return (uint16_t)constrain(round((pow(2, RESOLUTION))*temp), 0, pow(2, RESOLUTION)-1); //Round and constrain, done if uni-polar
+  }
   
   int32_t binary = round((pow(2, RESOLUTION))*temp);
   return 0x8000^(uint16_t)constrain(binary, 0, pow(2, RESOLUTION)-1);  //Return the constained values
@@ -133,22 +144,31 @@ uint16_t float2bin(double inputValue, uint16_t resistance, bool bipolar, uint8_t
 double bin2float(uint16_t binary, uint16_t resistance, bool bipolar, uint8_t gain){
   //Convert 2's compliment to analog value
   // XOR to invert MSB 
-  double temp = (0x8000^binary)/(pow(2,RESOLUTION));
-  temp *= VREF*gain;
-  
+ 
+  double temp;
+
   if (bipolar){
+    temp = (0x8000^binary)/(pow(2,RESOLUTION));
+    temp *= VREF*gain;
     temp -= gain*VREF/2;
+    
+  }
+  else{
+    temp = (binary)/(pow(2,RESOLUTION));
+    temp *= VREF*gain;
   }
   return (temp/resistance);
 }
 
 //DAC Functions
 void DAC_setup(bool enable){
-  SPI_Write(CLEAR, 0x0000); //Reset the outputs to zero
+  SPI_Write(CONTROL_REG, 0x0005);  //Disable TSD, Enable Current Clamp, Clear to Midscale, Disable SDO
   SPI_Write(OUTPUT_RANGE_ALL, RANGE_DEFAULT); //Range to +/- 5V
+  SPI_Write(CLEAR, 0x0000); //Reset the outputs to zero
   if (enable){
     SPI_Write(POWER_REG, POWER_ON_ALL);  // Power on all dacs
   }
+  delay(1);
 }
 
 void DAC_output(uint8_t channel, uint16_t binary){
@@ -188,21 +208,21 @@ void cmdSetChannelCurrent(MyCommandParser::Argument *args, char *response){
 
   //Parse the input args:
   uint8_t channel = (uint8_t)args[0].asInt64;
-  Serial.print("Channel: ");
-  Serial.println(channel);
+  //Serial.print("Channel: ");
+  //Serial.println(channel);
   double setpoint = args[1].asDouble;
-  Serial.print("Setting: ");
-  Serial.println(setpoint);
+  //Serial.print("Setting: ");
+  //Serial.println(setpoint);
   char * units = args[2].asString;
   //Serial.print("Units: ");
   
   //Switch case to determine units
-  if (strcmp(units, "uA") == 0){
+  if (strcmp(units, "UA") == 0){
     
     setpoint *= 1e-6;
     //Serial.println(setpoint, 8);
   }
-  else if (strcmp(units, "mA") == 0){
+  else if (strcmp(units, "MA") == 0){
     
     setpoint *= 1e-3;
     //Serial.println(setpoint, 5);
@@ -223,28 +243,28 @@ void cmdSetChannelCurrent(MyCommandParser::Argument *args, char *response){
       gain = Channel1Gain;
       bipolar = Channel1Bipolar;
       setpoint_ptr = &Channel1Setpoint;
-      channel = DAC_A;  //re-use channel with the register mask
+      channel = DAC_B;  //re-use channel with the register mask
       break;
     case 2:
       resistor = CH2_RESISTOR;
       gain = Channel2Gain;
       bipolar = Channel2Bipolar;
       setpoint_ptr = &Channel2Setpoint;
-      channel = DAC_B;
+      channel = DAC_A;
       break;
     case 3:
       resistor = CH3_RESISTOR;
       gain = Channel3Gain;
       bipolar = Channel3Bipolar;
       setpoint_ptr = &Channel3Setpoint;
-      channel = DAC_C;
+      channel = DAC_D;
       break;
     case 4:
       resistor = CH4_RESISTOR;
       gain = Channel4Gain;
       bipolar = Channel4Bipolar;
       setpoint_ptr = &Channel4Setpoint;
-      channel = DAC_D;
+      channel = DAC_C;
       break;
     default:
       strlcpy_PF(response, F("ERROR: Channel not found, options are 1, 2, 3, and 4"), MyCommandParser::MAX_RESPONSE_SIZE);
@@ -252,10 +272,14 @@ void cmdSetChannelCurrent(MyCommandParser::Argument *args, char *response){
   }
   //Calculate DAC Command from float
   uint16_t binary = float2bin(setpoint, resistor, bipolar, gain);
-  Serial.println(binary, BIN);
+  //Serial.println(binary, BIN);
   //Send Commands to DAC
   DAC_output(channel, binary);
   //Report actual current
+  //Serial.print("binary: ");Serial.println(binary, BIN);
+  //Serial.print("resistor: ");Serial.println(resistor);
+  //Serial.print("bipolar: ");Serial.println(bipolar);
+  //Serial.print("gain: ");Serial.println(gain);
   double current = bin2float(binary, resistor, bipolar, gain);
   *setpoint_ptr = current;
   if (current > 1){
@@ -304,21 +328,29 @@ void cmdStatus(MyCommandParser::Argument *args, char *response){
   float2val_units(Channel1Setpoint);
   Serial.print("\tRange:\t\t");
   gain_polar2range(Channel1Gain,Channel1Bipolar);
+  Serial.print("\tResistor:\t");
+  Serial.println(CH1_RESISTOR);
   Serial.println("Channel 2:");
   Serial.print("\tCurrent:\t");
   float2val_units(Channel2Setpoint);
   Serial.print("\tRange:\t\t");
   gain_polar2range(Channel2Gain,Channel2Bipolar);
+  Serial.print("\tResistor:\t");
+  Serial.println(CH2_RESISTOR);
   Serial.println("Channel 3:");
   Serial.print("\tCurrent:\t");
   float2val_units(Channel3Setpoint);
   Serial.print("\tRange:\t\t");
   gain_polar2range(Channel3Gain,Channel3Bipolar);
+  Serial.print("\tResistor:\t");
+  Serial.println(CH3_RESISTOR);
   Serial.println("Channel 4:");
   Serial.print("\tCurrent:\t");
   float2val_units(Channel4Setpoint);
   Serial.print("\tRange:\t\t");
   gain_polar2range(Channel4Gain,Channel4Bipolar);
+  Serial.print("\tResistor:\t");
+  Serial.println(CH4_RESISTOR);
   
 
 }
@@ -338,25 +370,25 @@ void cmdScale(MyCommandParser::Argument *args, char *response){
     case 1:
       gain = &Channel1Gain;
       bipolar = &Channel1Bipolar;
-      command = 0x08;
+      command = 0x08+DAC_B;
       Channel1Setpoint = NAN;  //Invalidate the setpoint in memory since the scale changed
       break;
     case 2:
       gain = &Channel2Gain;
       bipolar = &Channel2Bipolar;
-      command = 0x09;
+      command = 0x08+DAC_A;
       Channel2Setpoint = NAN;  //Invalidate the setpoint in memory since the scale changed
       break;
     case 3:
       gain = &Channel3Gain;
       bipolar = &Channel3Bipolar;
-      command = 0x0A;
+      command = 0x08+DAC_D;
       Channel3Setpoint = NAN;  //Invalidate the setpoint in memory since the scale changed
       break;
     case 4:
       gain = &Channel4Gain;
       bipolar = &Channel4Bipolar;
-      command = 0x0B;
+      command = 0x08+DAC_C;
       Channel4Setpoint = NAN;  //Invalidate the setpoint in memory since the scale changed
       break;
     default:
@@ -393,12 +425,18 @@ void cmdScale(MyCommandParser::Argument *args, char *response){
   strlcpy(response, "OK", MyCommandParser::MAX_RESPONSE_SIZE);
 
 }
-void cmd_test(MyCommandParser::Argument *args, char *response) {
-  Serial.print("string: "); Serial.println(args[0].asString);
-  Serial.print("double: "); Serial.println(args[1].asDouble);
-  Serial.print("int64: "); Serial.println((int32_t)args[2].asInt64); // NOTE: on older AVR-based boards, Serial doesn't support printing 64-bit values, so we'll cast it down to 32-bit
-  Serial.print("uint64: "); Serial.println((uint32_t)args[3].asUInt64); // NOTE: on older AVR-based boards, Serial doesn't support printing 64-bit values, so we'll cast it down to 32-bit
-  strlcpy(response, "success", MyCommandParser::MAX_RESPONSE_SIZE);
+
+
+void cmdVmon(MyCommandParser::Argument *args, char *response){
+  int P12V = analogRead(P12VMON);
+  int N12V = analogRead(N12VMON);
+  int P5V = analogRead(P5VMON);
+  Serial.print("+12V Rail:\t");
+  Serial.println((float)P12V*AREF*P12SCALE/1023);
+  Serial.print("-12V Rail:\t");
+  Serial.println((float)-N12V*AREF*N12SCALE/1023);
+  Serial.print("+5V Rail:\t");
+  Serial.println((float)P5V*AREF*P5SCALE/1023);
 }
 
 
